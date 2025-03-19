@@ -89,10 +89,15 @@ def precompute_faiss_index():
 FILENAMES_FILE = "filenames.pkl"
 
 print("Loading FAISS index...")
-if os.path.exists(FAISS_FILE) and os.path.exists(FILENAMES_FILE):
-    # Load FAISS index from file
-    FAISS_INDEX = faiss.read_index(FAISS_FILE)
-    print(f"FAISS index loaded from {FAISS_FILE}")
+if os.path.exists(FILENAMES_FILE):
+    # Download FAISS index from the provided URL
+    FAISS_FILE_URL = "https://4aq1f7ahdqcigsvb.public.blob.vercel-storage.com/faiss_index-0BggZIlxT1pCkgj7leKlAt31e6fvSU.bin"
+    response = requests.get(FAISS_FILE_URL)
+    if response.status_code == 200:
+        FAISS_INDEX = faiss.deserialize_index(response.content)
+        print(f"FAISS index loaded directly from the downloaded content")
+    else:
+        raise Exception(f"Failed to download FAISS index: {response.status_code} {response.text}")
 
     # Load FILENAMES from file
     with open(FILENAMES_FILE, "rb") as f:
