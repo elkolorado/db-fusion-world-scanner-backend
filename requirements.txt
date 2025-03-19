@@ -3,4 +3,3 @@ uvicorn
 opencv-python
 numpy
 faiss-cpu
-selenium
