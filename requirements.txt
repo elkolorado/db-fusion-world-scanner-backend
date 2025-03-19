@@ -3,3 +3,4 @@ uvicorn
 numpy
 faiss-cpu
 python-multipart
+requests
