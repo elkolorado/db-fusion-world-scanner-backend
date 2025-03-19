@@ -1,5 +1,5 @@
 fastapi
 uvicorn
-opencv-python
 numpy
 faiss-cpu
+python-multipart
