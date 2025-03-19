@@ -1,0 +1,3 @@
+faiss_index.bin
+*.pkl
+*.db
