@@ -7,6 +7,14 @@ import pickle
 import time
 import faiss
 
+import asyncio
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+
+
 from concurrent.futures import ThreadPoolExecutor
 
 
@@ -182,13 +190,6 @@ async def display_image(filename: str):
 async def read_root():
     """Root endpoint."""
     return {"Hello": "World"}
-
-import asyncio
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
 
 @app.get("/cardInfo")
 async def get_card_info(cardname: str):
