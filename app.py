@@ -103,7 +103,8 @@ if os.path.exists(FILENAMES_FILE):
     # print(f"Filenames loaded from {FILENAMES_FILE}")
 
 
-    FAISS_FILE_URL = "https://github.com/elkolorado/db-fusion-world-scanner-backend/raw/refs/heads/master/faiss_index.bin"
+    # FAISS_FILE_URL = "https://github.com/elkolorado/db-fusion-world-scanner-backend/raw/refs/heads/master/faiss_index.bin"
+    FAISS_FILE_URL = "https://wseii-my.sharepoint.com/personal/filip_zielinski_microsoft_wsei_edu_pl/_layouts/15/download.aspx?SourceUrl=%2Fpersonal%2Ffilip%5Fzielinski%5Fmicrosoft%5Fwsei%5Fedu%5Fpl%2FDocuments%2Ffaiss%5Findex%2Ebin"
     response = requests.get(FAISS_FILE_URL)
     if response.status_code == 200:
         FAISS_INDEX = faiss.deserialize_index(np.array(BytesIO(response.content).getbuffer(), dtype=np.uint8))
