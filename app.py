@@ -1,6 +1,4 @@
 from fastapi import FastAPI, File, UploadFile
-import sqlite3
-import cv2
 import numpy as np
 import os
 import pickle
@@ -13,9 +11,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 app = FastAPI()
 
-# ORB Detector
-sift = cv2.SIFT_create(nfeatures=500)
-
 
 # File paths for saved descriptors and FAISS index
 DESCRIPTORS_FILE = "descriptors.pkl"
@@ -23,11 +18,18 @@ FAISS_FILE = "faiss_index.bin"
 
 
 def extract_keypoints_from_bytes(image_bytes):
-    """Extract keypoints and descriptors from image bytes using full-color processing."""
-    image_array = np.frombuffer(image_bytes, dtype=np.uint8)
-    image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)  # Use full-color image
-    keypoints, descriptors = sift.detectAndCompute(image, None)
-    return keypoints, descriptors
+    """Extract keypoints and descriptors from image bytes using an external API."""
+    url = "https://db-fusion-world-keypoints.vercel.app/extract_keypoints"
+    files = {"file": ("image.jpg", image_bytes, "image/jpeg")}
+    response = requests.post(url, files=files)
+
+    if response.status_code == 200:
+        data = response.json()
+        keypoints = data.get("keypoints", [])
+        descriptors = np.array(data.get("descriptors", []), dtype=np.float32)
+        return keypoints, descriptors
+    else:
+        raise Exception(f"Failed to extract keypoints: {response.status_code} {response.text}")
 
 
 def load_descriptors(db_path="cards.db"):
@@ -168,6 +170,7 @@ async def match_card_api(file: UploadFile = File(...)):
 
 #file response
 from fastapi.responses import FileResponse
+import requests
 
 @app.get("/displayImage")
 async def display_image(filename: str):
