@@ -5,6 +5,8 @@ import pickle
 import faiss
 from fastapi.responses import FileResponse
 import requests
+from io import BytesIO
+
 
 
 from concurrent.futures import ThreadPoolExecutor
@@ -21,6 +23,7 @@ FAISS_FILE = "faiss_index.bin"
 def extract_keypoints_from_bytes(image_bytes):
     """Extract keypoints and descriptors from image bytes using an external API."""
     url = "https://db-fusion-world-keypoints.vercel.app/extract_keypoints"
+    # url = "http://127.0.0.1:8001/extract_keypoints"  # Replace with the correct hostname or IP address
     files = {"file": ("image.jpg", image_bytes, "image/jpeg")}
     response = requests.post(url, files=files)
 
@@ -92,10 +95,18 @@ FILENAMES_FILE = "filenames.pkl"
 print("Loading FAISS index...")
 if os.path.exists(FILENAMES_FILE):
     # Download FAISS index from the provided URL
-    FAISS_FILE_URL = "https://4aq1f7ahdqcigsvb.public.blob.vercel-storage.com/faiss_index-0BggZIlxT1pCkgj7leKlAt31e6fvSU.bin"
+    # FAISS_INDEX = faiss.read_index(FAISS_FILE)
+
+    #     # Load FILENAMES from file
+    # with open(FILENAMES_FILE, "rb") as f:
+    #     FILENAMES = pickle.load(f)
+    # print(f"Filenames loaded from {FILENAMES_FILE}")
+
+
+    FAISS_FILE_URL = "https://github.com/elkolorado/db-fusion-world-scanner-backend/raw/refs/heads/master/faiss_index.bin"
     response = requests.get(FAISS_FILE_URL)
     if response.status_code == 200:
-        FAISS_INDEX = faiss.deserialize_index(response.content)
+        FAISS_INDEX = faiss.deserialize_index(np.array(BytesIO(response.content).getbuffer(), dtype=np.uint8))
         print(f"FAISS index loaded directly from the downloaded content")
     else:
         raise Exception(f"Failed to download FAISS index: {response.status_code} {response.text}")
@@ -266,3 +277,6 @@ async def get_card_info(cardname: str):
                             "expansion": "wip",
                             "link": "wip"
                         }
+
+
+
