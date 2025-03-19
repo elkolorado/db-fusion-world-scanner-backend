@@ -3,7 +3,8 @@ import numpy as np
 import os
 import pickle
 import faiss
-
+from fastapi.responses import FileResponse
+import requests
 
 
 from concurrent.futures import ThreadPoolExecutor
@@ -174,8 +175,7 @@ async def match_card_api(file: UploadFile = File(...)):
     return {"best_match": best_match}
 
 #file response
-from fastapi.responses import FileResponse
-import requests
+
 
 @app.get("/displayImage")
 async def display_image(filename: str):
