@@ -5,3 +5,4 @@ faiss-cpu
 python-multipart
 requests
 opencv-python
+
