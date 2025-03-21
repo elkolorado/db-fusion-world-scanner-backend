@@ -204,6 +204,14 @@ async def read_root():
     """Root endpoint."""
     return {"Hello": "World"}
 
+
+# import asyncio
+# from selenium import webdriver
+# from selenium.webdriver.common.by import By
+# from selenium.webdriver.support.ui import WebDriverWait
+# from selenium.webdriver.support import expected_conditions as EC
+# from selenium.webdriver.chrome.options import Options
+
 # @app.get("/cardInfo")
 # async def get_card_info(cardname: str):
 #     """Get card info from CardMarket using Selenium."""
@@ -267,7 +275,6 @@ async def read_root():
 #     # Run the blocking Selenium operation in a separate thread
 #     return await asyncio.to_thread(fetch_card_info)
 
-
 @app.get("/cardInfo")
 async def get_card_info(cardname: str):
     return {
@@ -278,6 +285,5 @@ async def get_card_info(cardname: str):
                             "expansion": "wip",
                             "link": "wip"
                         }
-
 
 
