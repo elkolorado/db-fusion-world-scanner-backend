@@ -1,18 +1,19 @@
 from fastapi import FastAPI, File, UploadFile
+import sqlite3
+import cv2
 import numpy as np
 import os
 import pickle
+import time
 import faiss
-from fastapi.responses import FileResponse
-import requests
-from io import BytesIO
-
-
 
 from concurrent.futures import ThreadPoolExecutor
 
 
 app = FastAPI()
+
+# ORB Detector
+sift = cv2.SIFT_create(nfeatures=500)
 
 
 # File paths for saved descriptors and FAISS index
@@ -21,19 +22,11 @@ FAISS_FILE = "faiss_index.bin"
 
 
 def extract_keypoints_from_bytes(image_bytes):
-    """Extract keypoints and descriptors from image bytes using an external API."""
-    url = "https://db-fusion-world-keypoints.vercel.app/extract_keypoints"
-    # url = "http://127.0.0.1:8001/extract_keypoints"  # Replace with the correct hostname or IP address
-    files = {"file": ("image.jpg", image_bytes, "image/jpeg")}
-    response = requests.post(url, files=files)
-
-    if response.status_code == 200:
-        data = response.json()
-        keypoints = data.get("keypoints", [])
-        descriptors = np.array(data.get("descriptors", []), dtype=np.float32)
-        return keypoints, descriptors
-    else:
-        raise Exception(f"Failed to extract keypoints: {response.status_code} {response.text}")
+    """Extract keypoints and descriptors from image bytes using full-color processing."""
+    image_array = np.frombuffer(image_bytes, dtype=np.uint8)
+    image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)  # Use full-color image
+    keypoints, descriptors = sift.detectAndCompute(image, None)
+    return keypoints, descriptors
 
 
 def load_descriptors(db_path="cards.db"):
@@ -93,24 +86,10 @@ def precompute_faiss_index():
 FILENAMES_FILE = "filenames.pkl"
 
 print("Loading FAISS index...")
-if os.path.exists(FILENAMES_FILE):
-    # Download FAISS index from the provided URL
-    # FAISS_INDEX = faiss.read_index(FAISS_FILE)
-
-    #     # Load FILENAMES from file
-    # with open(FILENAMES_FILE, "rb") as f:
-    #     FILENAMES = pickle.load(f)
-    # print(f"Filenames loaded from {FILENAMES_FILE}")
-
-
-    # FAISS_FILE_URL = "https://github.com/elkolorado/db-fusion-world-scanner-backend/raw/refs/heads/master/faiss_index.bin"
-    FAISS_FILE_URL = "https://wseii-my.sharepoint.com/personal/filip_zielinski_microsoft_wsei_edu_pl/_layouts/15/download.aspx?SourceUrl=%2Fpersonal%2Ffilip%5Fzielinski%5Fmicrosoft%5Fwsei%5Fedu%5Fpl%2FDocuments%2Ffaiss%5Findex%2Ebin"
-    response = requests.get(FAISS_FILE_URL)
-    if response.status_code == 200:
-        FAISS_INDEX = faiss.deserialize_index(np.array(BytesIO(response.content).getbuffer(), dtype=np.uint8))
-        print(f"FAISS index loaded directly from the downloaded content")
-    else:
-        raise Exception(f"Failed to download FAISS index: {response.status_code} {response.text}")
+if os.path.exists(FAISS_FILE) and os.path.exists(FILENAMES_FILE):
+    # Load FAISS index from file
+    FAISS_INDEX = faiss.read_index(FAISS_FILE)
+    print(f"FAISS index loaded from {FAISS_FILE}")
 
     # Load FILENAMES from file
     with open(FILENAMES_FILE, "rb") as f:
@@ -187,7 +166,7 @@ async def match_card_api(file: UploadFile = File(...)):
     return {"best_match": best_match}
 
 #file response
-
+from fastapi.responses import FileResponse
 
 @app.get("/displayImage")
 async def display_image(filename: str):
@@ -203,7 +182,6 @@ async def display_image(filename: str):
 async def read_root():
     """Root endpoint."""
     return {"Hello": "World"}
-
 
 # import asyncio
 # from selenium import webdriver
@@ -274,16 +252,4 @@ async def read_root():
 
 #     # Run the blocking Selenium operation in a separate thread
 #     return await asyncio.to_thread(fetch_card_info)
-
-@app.get("/cardInfo")
-async def get_card_info(cardname: str):
-    return {
-                            "name": cardname,
-                            "number": "wip",
-                            "availability": "wip",
-                            "price": "wip",
-                            "expansion": "wip",
-                            "link": "wip"
-                        }
-
 
