@@ -183,73 +183,73 @@ async def read_root():
     """Root endpoint."""
     return {"Hello": "World"}
 
-import asyncio
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
+# import asyncio
+# from selenium import webdriver
+# from selenium.webdriver.common.by import By
+# from selenium.webdriver.support.ui import WebDriverWait
+# from selenium.webdriver.support import expected_conditions as EC
+# from selenium.webdriver.chrome.options import Options
 
-@app.get("/cardInfo")
-async def get_card_info(cardname: str):
-    """Get card info from CardMarket using Selenium."""
-    def fetch_card_info():
-        # Set up Selenium WebDriver
-        chrome_options = Options()
-        # chrome_options.add_argument("--headless")  # Run in headless mode
-        # chrome_options.add_argument("--disable-gpu")
-        # chrome_options.add_argument("--no-sandbox")
-        driver = webdriver.Chrome(options=chrome_options)
+# @app.get("/cardInfo")
+# async def get_card_info(cardname: str):
+#     """Get card info from CardMarket using Selenium."""
+#     def fetch_card_info():
+#         # Set up Selenium WebDriver
+#         chrome_options = Options()
+#         # chrome_options.add_argument("--headless")  # Run in headless mode
+#         # chrome_options.add_argument("--disable-gpu")
+#         # chrome_options.add_argument("--no-sandbox")
+#         driver = webdriver.Chrome(options=chrome_options)
 
-        try:
-            # Navigate to the CardMarket search page
-            url = f"https://www.cardmarket.com/en/DragonBallSuper/Products/Search?searchString={cardname.split('_')[0]}"
-            driver.get(url)
-            card_prefix = cardname.split("-")[0].split("_")[0].upper()
+#         try:
+#             # Navigate to the CardMarket search page
+#             url = f"https://www.cardmarket.com/en/DragonBallSuper/Products/Search?searchString={cardname.split('_')[0]}"
+#             driver.get(url)
+#             card_prefix = cardname.split("-")[0].split("_")[0].upper()
 
-            # Wait for the table to load
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "table-body"))
-            )
+#             # Wait for the table to load
+#             WebDriverWait(driver, 10).until(
+#                 EC.presence_of_element_located((By.CLASS_NAME, "table-body"))
+#             )
 
-            # Find all rows in the table
-            table_body = driver.find_element(By.CLASS_NAME, "table-body")
-            rows = [row for row in table_body.find_elements(By.CLASS_NAME, "row.g-0") if "productRow" in row.get_attribute("id")]
+#             # Find all rows in the table
+#             table_body = driver.find_element(By.CLASS_NAME, "table-body")
+#             rows = [row for row in table_body.find_elements(By.CLASS_NAME, "row.g-0") if "productRow" in row.get_attribute("id")]
 
-            # Parse the rows to find the matching card
-            for row in rows:
-                try:
-                    # Extract the expansion (e.g., FB03, FWUP)
-                    expansion_element = row.find_element(By.CLASS_NAME, "col-icon.small")
-                    expansion = expansion_element.find_element(By.TAG_NAME, "span").text.strip()
+#             # Parse the rows to find the matching card
+#             for row in rows:
+#                 try:
+#                     # Extract the expansion (e.g., FB03, FWUP)
+#                     expansion_element = row.find_element(By.CLASS_NAME, "col-icon.small")
+#                     expansion = expansion_element.find_element(By.TAG_NAME, "span").text.strip()
 
-                    # Check if the expansion matches the card prefix
-                    if expansion == card_prefix:
-                        # Extract card details
-                        card_name = row.find_element(By.TAG_NAME, "a").text.strip()
-                        card_number = row.find_element(By.CLASS_NAME, "col-number").text.strip()
-                        availability = row.find_element(By.CLASS_NAME, "col-availability").text.strip()
-                        price = row.find_element(By.CLASS_NAME, "col-price").text.strip()
-                        link = row.find_element(By.CLASS_NAME, "col-12.col-md-8.px-2.flex-column").find_element(By.TAG_NAME, "a").get_attribute("href")
-                        # Return the matching card details
-                        return {
-                            "name": cardname,
-                            "number": card_number,
-                            "availability": availability,
-                            "price": price,
-                            "expansion": expansion,
-                            "link": link
-                        }
-                except Exception as e:
-                    # Skip rows with missing data
-                    print(f"Error processing row: {e}")
+#                     # Check if the expansion matches the card prefix
+#                     if expansion == card_prefix:
+#                         # Extract card details
+#                         card_name = row.find_element(By.TAG_NAME, "a").text.strip()
+#                         card_number = row.find_element(By.CLASS_NAME, "col-number").text.strip()
+#                         availability = row.find_element(By.CLASS_NAME, "col-availability").text.strip()
+#                         price = row.find_element(By.CLASS_NAME, "col-price").text.strip()
+#                         link = row.find_element(By.CLASS_NAME, "col-12.col-md-8.px-2.flex-column").find_element(By.TAG_NAME, "a").get_attribute("href")
+#                         # Return the matching card details
+#                         return {
+#                             "name": cardname,
+#                             "number": card_number,
+#                             "availability": availability,
+#                             "price": price,
+#                             "expansion": expansion,
+#                             "link": link
+#                         }
+#                 except Exception as e:
+#                     # Skip rows with missing data
+#                     print(f"Error processing row: {e}")
 
-            # If no matching card is found
-            return {"error": "No matching card found"}
+#             # If no matching card is found
+#             return {"error": "No matching card found"}
 
-        finally:
-            driver.quit()
+#         finally:
+#             driver.quit()
 
-    # Run the blocking Selenium operation in a separate thread
-    return await asyncio.to_thread(fetch_card_info)
+#     # Run the blocking Selenium operation in a separate thread
+#     return await asyncio.to_thread(fetch_card_info)
 
