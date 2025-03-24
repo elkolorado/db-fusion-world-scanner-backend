@@ -17,7 +17,7 @@ def run_initialization():
 
             # Run lightglue/db.py
             print("Running lightglue/db.py...")
-            subprocess.run(["python", "lightglue/db_only_fb.py"], check=True)
+            subprocess.run(["python", "populate_db/db_only_fb.py"], check=True)
         else:
             print("faiss_index.bin already exists. Skipping database initialization.")
 
