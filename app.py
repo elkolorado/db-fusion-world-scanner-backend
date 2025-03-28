@@ -8,9 +8,19 @@ import time
 import faiss
 
 from concurrent.futures import ThreadPoolExecutor
+from fastapi.middleware.cors import CORSMiddleware
 
 
 app = FastAPI()
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8081", "http://127.0.0.1"],  # Allow localhost
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
+)
 
 # ORB Detector
 sift = cv2.SIFT_create(nfeatures=500)

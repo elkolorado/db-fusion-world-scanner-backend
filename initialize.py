@@ -13,11 +13,11 @@ def run_initialization():
 
             # Run db.py
             print("Running db.py...")
-            subprocess.run(["python", "db.py"], check=True)
+            subprocess.run(["python", "populate_db/create_db.py"], check=True)
 
             # Run lightglue/db.py
             print("Running lightglue/db.py...")
-            subprocess.run(["python", "populate_db/db_only_fb.py"], check=True)
+            subprocess.run(["python", "populate_db/db.py"], check=True)
         else:
             print("faiss_index.bin already exists. Skipping database initialization.")
 
