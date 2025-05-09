@@ -202,13 +202,29 @@ from datetime import datetime, timedelta
 SECRET_KEY = "your_secret_key2"
 ALGORITHM = "HS256"
 
-USER_DB = {
-    "123": "123"  # Replace with your actual user data
-}
+import bcrypt
 
-def authenticate_user(username: str, password: str):
-    """Authenticate the user by checking the username and password."""
-    if username in USER_DB and USER_DB[username] == password:
+def hash_password(password: str) -> str:
+    """Hash a plaintext password."""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+def authenticate_user(username: str, password: str) -> bool:
+    """Authenticate the user by checking the username and hashed password in the database."""
+    conn = sqlite3.connect("cards.db")
+    cursor = conn.cursor()
+
+    # Use parameterized query to prevent SQL injection
+    query = """
+        SELECT password
+        FROM users
+        WHERE username = ?
+    """
+    cursor.execute(query, (username,))
+    row = cursor.fetchone()
+    conn.close()
+
+    # Check if the user exists and the password matches
+    if row and bcrypt.checkpw(password.encode('utf-8'), row[0].encode('utf-8')):
         return True
     return False
 
@@ -237,6 +253,167 @@ async def login(request: LoginRequest):
 
     return {"token": token, "token_type": "bearer"}
 
+
+from fastapi import Depends
+from fastapi.security import OAuth2PasswordBearer
+from typing import List
+
+# OAuth2 scheme for token authentication
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+# Define the Card interface
+class Card(BaseModel):
+    id: str
+    name: str
+    image: str
+    quantity: int
+    set: str
+
+def decode_jwt(token: str):
+    """Decode and verify the JWT token."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    """Extract the current user from the JWT token."""
+    payload = decode_jwt(token)
+    return payload.get("sub")  # Return the username (subject)
+
+@app.get("/collection", response_model=List[Card])
+async def get_collection(current_user: str = Depends(get_current_user)):
+    """Fetch the user's card collection."""
+    # Connect to the database
+    conn = sqlite3.connect("cards.db")
+    cursor = conn.cursor()
+
+    # Query the user's collection securely using parameterized query
+    cursor.execute("""
+        SELECT cards.id, cards.filename, cards.name, user_cards.quantity, cards."set"
+        FROM user_cards
+        JOIN cards ON user_cards.card_id = cards.id
+        WHERE user_cards.username = ?
+    """, (current_user,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    # Format the result as a list of Card objects
+    collection = [
+        Card(
+            id=str(row[0]) if row[0] is not None else "",
+            name=row[1] if row[1] is not None else "",
+            image=f"/displayImage?filename={row[1]}" if row[1] is not None else "",
+            quantity=row[3] if row[3] is not None else 0,
+            set=row[4] if row[4] is not None else ""
+        )
+        for row in rows
+    ]
+
+    return collection
+
+from pydantic import BaseModel
+
+# Define a Pydantic model for adding a card
+
+@app.post("/collection/add")
+async def add_card_to_collection(request: Card, current_user: str = Depends(get_current_user)):
+    print(request)
+    """Add a card to the user's collection."""
+    card_id = request.name + '.webp'
+
+    print(card_id)
+
+    # Connect to the database
+    conn = sqlite3.connect("cards.db")
+    cursor = conn.cursor()
+
+    # Check if the card exists in the cards table
+    cursor.execute("SELECT id FROM cards WHERE filename = ?", (card_id,))
+    card = cursor.fetchone()
+    currentCardId = card[0] if card else None
+    print(card)
+    if not card:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Card not found")
+
+    # Check if the user already has the card in their collection
+    cursor.execute("""
+        SELECT quantity
+        FROM user_cards
+        WHERE username = ? AND card_id = ?
+    """, (current_user, currentCardId))
+    user_card = cursor.fetchone()
+
+    if user_card is not None:
+        # Update the quantity if the card already exists in the user's collection
+        new_quantity = user_card[0] + 1
+        cursor.execute("""
+            UPDATE user_cards
+            SET quantity = ?
+            WHERE username = ? AND card_id = ?
+        """, (new_quantity, current_user, currentCardId))
+    else:
+        # Insert the card into the user's collection
+        cursor.execute("""
+            INSERT INTO user_cards (username, card_id, quantity)
+            VALUES (?, ?, ?)
+        """, (current_user, currentCardId, 1))
+
+    conn.commit()
+    conn.close()
+
+    return request
+
+
+# Define a Pydantic model for removing a card
+class RemoveCardRequest(BaseModel):
+    id: str
+
+@app.post("/collection/removeCard")
+async def remove_card_from_collection(request: RemoveCardRequest, current_user: str = Depends(get_current_user)):
+    """Remove a single quantity of a card from the user's collection."""
+    card_id = request.id + '.webp'
+
+    # Connect to the database
+    conn = sqlite3.connect("cards.db")
+    cursor = conn.cursor()
+
+    # Check if the card exists in the cards table
+    cursor.execute("""
+        SELECT user_cards.card_id, user_cards.quantity 
+        FROM user_cards 
+        JOIN cards ON user_cards.card_id = cards.id 
+        WHERE user_cards.username = ? AND cards.filename = ?
+    """, (current_user, card_id))
+    user_card = cursor.fetchone()
+
+    if not user_card:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Card not found in user's collection")
+
+    current_card_id = user_card[0]
+    current_quantity = user_card[1]
+
+    if current_quantity > 1:
+        # Decrease the quantity by 1
+        new_quantity = current_quantity - 1
+        cursor.execute("""
+            UPDATE user_cards SET quantity = ? WHERE username = ? AND card_id = ?
+        """, (new_quantity, current_user, current_card_id))
+    else:
+        # Remove the card from the user's collection if the quantity is 1
+        cursor.execute("""
+            DELETE FROM user_cards WHERE username = ? AND card_id = ?
+        """, (current_user, current_card_id))
+
+    conn.commit()
+    conn.close()
+
+    return {"message": "Card quantity updated successfully"}
 
 # import asyncio
 # from selenium import webdriver
