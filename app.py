@@ -193,6 +193,51 @@ async def read_root():
     """Root endpoint."""
     return {"Hello": "World"}
 
+
+import jwt
+from fastapi import HTTPException, Depends
+from datetime import datetime, timedelta
+
+# Secret key for signing JWTs
+SECRET_KEY = "your_secret_key2"
+ALGORITHM = "HS256"
+
+USER_DB = {
+    "123": "123"  # Replace with your actual user data
+}
+
+def authenticate_user(username: str, password: str):
+    """Authenticate the user by checking the username and password."""
+    if username in USER_DB and USER_DB[username] == password:
+        return True
+    return False
+
+from pydantic import BaseModel
+# Define a Pydantic model for the login request
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/auth/login")
+async def login(request: LoginRequest):
+    """Authenticate user and return a JWT token."""
+    username = request.username
+    password = request.password
+    if not authenticate_user(username, password):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    # Generate JWT token
+    expiration = datetime.utcnow() + timedelta(hours=1)  # Token valid for 1 hour
+    payload = {
+        "sub": username,
+        "exp": expiration
+    }
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+    return {"token": token, "token_type": "bearer"}
+
+
 # import asyncio
 # from selenium import webdriver
 # from selenium.webdriver.common.by import By
