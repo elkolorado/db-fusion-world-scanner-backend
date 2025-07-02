@@ -23,7 +23,7 @@ def run_initialization():
 
         # Run uvicorn
         print("Starting uvicorn server...")
-        subprocess.run(["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"], check=True)
+        subprocess.run(["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"], check=True)
 
         print("Initialization completed successfully.")
     except subprocess.CalledProcessError as e:

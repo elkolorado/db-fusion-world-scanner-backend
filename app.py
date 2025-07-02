@@ -92,6 +92,36 @@ def precompute_faiss_index():
     print(f"FAISS index built with {index.ntotal} descriptors.")
     return index, filenames
 
+# def precompute_faiss_index():
+#     """Precompute FAISS index for all descriptors using IVF+high nprobe for fast and accurate search."""
+#     all_descriptors = []
+#     filenames = []
+
+#     # Collect all descriptors and filenames
+#     for filename, descriptors in DESCRIPTORS_CACHE.items():
+#         all_descriptors.append(np.vstack(descriptors))
+#         # Map each descriptor to its filename
+#         filenames.extend([filename] * len(descriptors))
+
+#     # Stack all descriptors into a single NumPy array
+#     all_descriptors = np.vstack(all_descriptors).astype(np.float32)
+
+#     # Create a FAISS index
+#     # Descriptor dimensionality (128 for SIFT)
+#     dimension = all_descriptors.shape[1]
+#     nlist = 4096  # Increase clusters for finer search
+#     quantizer = faiss.IndexFlatL2(dimension)
+#     index = faiss.IndexIVFFlat(quantizer, dimension, nlist, faiss.METRIC_L2)
+
+#     print("Training FAISS IVF index...")
+#     index.train(all_descriptors)
+#     print("Adding descriptors to IVF index...")
+#     index.add(all_descriptors)
+#     index.nprobe = 256  # Increase nprobe for higher recall/accuracy
+
+#     print(f"IVF index built with {index.ntotal} descriptors, nlist={nlist}, nprobe={index.nprobe}.")
+#     return index, filenames
+
 
 FILENAMES_FILE = "filenames.pkl"
 
@@ -149,6 +179,23 @@ def match_card(image_bytes, gpu_index=None):
         filename = FILENAMES[match_idx]
         match_counts[filename] = match_counts.get(filename, 0) + 1
     best_match = max(match_counts, key=match_counts.get, default=None)
+
+    # Save the original uploaded image with the card name if a match is found
+    if best_match:
+        image_array = np.frombuffer(image_bytes, dtype=np.uint8)
+        image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+        if image is not None:
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 1.0
+            thickness = 2
+            text_x = 10
+            text_y = 30
+            cv2.putText(image, best_match, (text_x, text_y), font, font_scale, (0, 255, 0), thickness, cv2.LINE_AA)
+            cv2.imwrite(f"matched_{best_match}", image)
+    else:
+        print("No match found for the given image.")
+    print(f"[matchCard] Best match: {best_match}")
+    print(f"[matchCard] Matches found: {len(good_matches)}")
     return best_match
 
 @app.post("/matchCard")
