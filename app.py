@@ -120,59 +120,45 @@ else:
     print(f"Filenames saved to {FILENAMES_FILE}")
 
 
-def match_card(image_bytes):
+# --- FAISS GPU index global initialization ---
+FAISS_GPU_INDEX = None
+if faiss.get_num_gpus() > 0:
+    res = faiss.StandardGpuResources()
+    FAISS_GPU_INDEX = faiss.index_cpu_to_gpu(res, 0, FAISS_INDEX)
+else:
+    FAISS_GPU_INDEX = FAISS_INDEX
+
+
+def match_card(image_bytes, gpu_index=None):
     """Match the query image using the FAISS index with GPU acceleration and parallel processing."""
     _, query_descriptors = extract_keypoints_from_bytes(image_bytes)
-
-    # Convert query descriptors to NumPy array
+    if query_descriptors is None or len(query_descriptors) == 0:
+        return None
     query_descriptors = np.array(query_descriptors, dtype=np.float32)
-
-    # Check if GPU FAISS is available and use it
-    if faiss.get_num_gpus() > 0:
-        res = faiss.StandardGpuResources()  # Initialize GPU resources
-        dimension = query_descriptors.shape[1]
-        gpu_index = faiss.index_cpu_to_gpu(
-            res, 0, FAISS_INDEX)  # Transfer index to GPU
-    else:
-        gpu_index = FAISS_INDEX
-
-    # Perform nearest neighbor search
-    k = 2  # Number of nearest neighbors
+    if gpu_index is None:
+        gpu_index = FAISS_GPU_INDEX
+    k = 2
     distances, indices = gpu_index.search(query_descriptors, k)
-
-    # Apply Lowe's ratio test in parallel
     def process_match(i):
-        if distances[i][0] < 0.7 * distances[i][1]:  # Lowe's ratio test
+        if distances[i][0] < 0.7 * distances[i][1]:
             return indices[i][0]
         return None
-
-    with ThreadPoolExecutor() as executor:
-        good_matches = list(filter(None, executor.map(
-            process_match, range(len(distances)))))
-
-    # Count matches for each filename
+    good_matches = list(filter(None, map(process_match, range(len(distances)))))
     match_counts = {}
     for match_idx in good_matches:
         filename = FILENAMES[match_idx]
         match_counts[filename] = match_counts.get(filename, 0) + 1
-
-    # Find the best match
     best_match = max(match_counts, key=match_counts.get, default=None)
     return best_match
 
 @app.post("/matchCard")
 async def match_card_api(file: UploadFile = File(...)):
-    """API endpoint to match a card."""
+    """API endpoint to match a card and log time taken."""
+    t0 = time.time()
     image_bytes = await file.read()
-
-    # Save the uploaded image to a file (optional, for debugging)
-    # with open("uploaded_image.jpg", "wb") as f:
-    #     f.write(image_bytes)
-
-    # Match the card
     best_match = match_card(image_bytes)
-
-    # Return the best match
+    t1 = time.time()
+    print(f"[matchCard] Time taken: {t1 - t0:.3f}s")
     return {"best_match": best_match}
 
 #file response
@@ -236,43 +222,73 @@ class LoginRequest(BaseModel):
 
 @app.post("/matchCards")
 async def match_cards_api(file: UploadFile = File(...)):
+    t0 = time.time()
     image_bytes = await file.read()
+    t1 = time.time()
     image_array = np.frombuffer(image_bytes, dtype=np.uint8)
     image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
-
-    # 1. Preprocess
+    t2 = time.time()
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     edges = cv2.Canny(blur, 50, 150)
-
-    # 2. Find contours
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    card_matches = []
+    t3 = time.time()
     rects = []
-
+    card_imgs = []
     for cnt in contours:
-        # 3. Approximate contour to polygon
         epsilon = 0.02 * cv2.arcLength(cnt, True)
         approx = cv2.approxPolyDP(cnt, epsilon, True)
-
-        # 4. Filter for quadrilaterals of reasonable area
         if len(approx) == 4 and cv2.contourArea(approx) > 10000:
-            # 5. Get bounding rect and crop
             x, y, w, h = cv2.boundingRect(approx)
             card_img = image[y:y+h, x:x+w]
-
-            # Encode cropped card to bytes
+            card_imgs.append(card_img)
             _, card_bytes = cv2.imencode('.jpg', card_img)
             card_bytes = card_bytes.tobytes()
-
-            # Use your existing match_card function
-            best_match = match_card(card_bytes)
+            rects.append((approx, x, y, w, h, card_bytes))
+    t4 = time.time()
+    # --- Batch SIFT extraction ---
+    descriptors_list = []
+    descriptor_ranges = []
+    for card_img in card_imgs:
+        keypoints, descriptors = sift.detectAndCompute(card_img, None)
+        if descriptors is not None and len(descriptors) > 0:
+            descriptor_ranges.append((len(descriptors_list), len(descriptors_list) + len(descriptors)))
+            descriptors_list.extend(descriptors)
+        else:
+            descriptor_ranges.append((len(descriptors_list), len(descriptors_list)))
+    t5 = time.time()
+    if len(descriptors_list) == 0:
+        card_matches = [None] * len(card_imgs)
+    else:
+        all_descriptors = np.array(descriptors_list, dtype=np.float32)
+        k = 2
+        gpu_index = FAISS_GPU_INDEX
+        print(f"[DEBUG] faiss.get_num_gpus() = {faiss.get_num_gpus()}")
+        print(f"[DEBUG] gpu_index type: {type(gpu_index)}")
+        print(f"[DEBUG] all_descriptors shape: {all_descriptors.shape}")
+        print(f"[DEBUG] FAISS_INDEX.ntotal: {FAISS_INDEX.ntotal}")
+        t6 = time.time()
+        distances, indices = gpu_index.search(all_descriptors, k)
+        t7 = time.time()
+        # --- Lowe's ratio test for all descriptors ---
+        good_matches = [None] * len(all_descriptors)
+        for i in range(len(all_descriptors)):
+            if distances[i][0] < 0.7 * distances[i][1]:
+                good_matches[i] = indices[i][0]
+        # --- Assign matches to each card by range ---
+        card_matches = []
+        for start, end in descriptor_ranges:
+            match_counts = {}
+            for idx in range(start, end):
+                match_idx = good_matches[idx]
+                if match_idx is not None:
+                    filename = FILENAMES[match_idx]
+                    match_counts[filename] = match_counts.get(filename, 0) + 1
+            best_match = max(match_counts, key=match_counts.get, default=None) if match_counts else None
             card_matches.append(best_match)
-            rects.append((approx, x, y, w, h))
-
-    # Draw rectangles and match text
+    t8 = time.time()
     vis_image = image.copy()
-    for (approx, x, y, w, h), match in zip(rects, card_matches):
+    for (approx, x, y, w, h, _), match in zip(rects, card_matches):
         cv2.drawContours(vis_image, [approx], -1, (0, 255, 0), 4)
         if match:
             font = cv2.FONT_HERSHEY_SIMPLEX
@@ -282,12 +298,11 @@ async def match_cards_api(file: UploadFile = File(...)):
             text_x = x + (w - text_size[0]) // 2
             text_y = y - 10 if y - 10 > 0 else y + h + 30
             cv2.putText(vis_image, match, (text_x, text_y), font, font_scale, (0, 0, 255), thickness, cv2.LINE_AA)
-
     vis_path = "detected_cards.jpg"
     cv2.imwrite(vis_path, vis_image)
-
-    
-
+    t9 = time.time()
+    # read={t1-t0:.3f}s decode={t2-t1:.3f}s preprocess={t3-t2:.3f}s contours={t4-t3:.3f}s sift={t5-t4:.3f}s faiss={t7-t6:.3f}s assign={t8-t7:.3f}s draw={t9-t8:.3f}s 
+    print(f"TIMING: total={t9-t0:.3f}s")
     return {"matches": card_matches}
 
 
@@ -372,6 +387,7 @@ async def get_collection(current_user: str = Depends(get_current_user)):
     return collection
 
 from pydantic import BaseModel
+import time
 
 # Define a Pydantic model for adding a card
 

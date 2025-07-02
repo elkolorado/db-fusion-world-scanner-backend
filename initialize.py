@@ -13,7 +13,7 @@ def run_initialization():
 
             # Run db.py
             print("Running db.py...")
-            subprocess.run(["python", "populate_db/create_db.py"], check=True)
+            subprocess.run(["python", "populate_db/create_users_table.py"], check=True)
 
             # Run lightglue/db.py
             print("Running lightglue/db.py...")
