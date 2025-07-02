@@ -234,6 +234,62 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+@app.post("/matchCards")
+async def match_cards_api(file: UploadFile = File(...)):
+    image_bytes = await file.read()
+    image_array = np.frombuffer(image_bytes, dtype=np.uint8)
+    image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+
+    # 1. Preprocess
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blur, 50, 150)
+
+    # 2. Find contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    card_matches = []
+    rects = []
+
+    for cnt in contours:
+        # 3. Approximate contour to polygon
+        epsilon = 0.02 * cv2.arcLength(cnt, True)
+        approx = cv2.approxPolyDP(cnt, epsilon, True)
+
+        # 4. Filter for quadrilaterals of reasonable area
+        if len(approx) == 4 and cv2.contourArea(approx) > 10000:
+            # 5. Get bounding rect and crop
+            x, y, w, h = cv2.boundingRect(approx)
+            card_img = image[y:y+h, x:x+w]
+
+            # Encode cropped card to bytes
+            _, card_bytes = cv2.imencode('.jpg', card_img)
+            card_bytes = card_bytes.tobytes()
+
+            # Use your existing match_card function
+            best_match = match_card(card_bytes)
+            card_matches.append(best_match)
+            rects.append((approx, x, y, w, h))
+
+    # Draw rectangles and match text
+    vis_image = image.copy()
+    for (approx, x, y, w, h), match in zip(rects, card_matches):
+        cv2.drawContours(vis_image, [approx], -1, (0, 255, 0), 4)
+        if match:
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 1.0
+            thickness = 2
+            text_size, _ = cv2.getTextSize(match, font, font_scale, thickness)
+            text_x = x + (w - text_size[0]) // 2
+            text_y = y - 10 if y - 10 > 0 else y + h + 30
+            cv2.putText(vis_image, match, (text_x, text_y), font, font_scale, (0, 0, 255), thickness, cv2.LINE_AA)
+
+    vis_path = "detected_cards.jpg"
+    cv2.imwrite(vis_path, vis_image)
+
+    
+
+    return {"matches": card_matches}
+
 
 @app.post("/auth/login")
 async def login(request: LoginRequest):
