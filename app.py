@@ -119,28 +119,50 @@ else:
         pickle.dump(FILENAMES, f)
     print(f"Filenames saved to {FILENAMES_FILE}")
 
+# Step 2: Create GPU index ONCE
+if faiss.get_num_gpus() > 0:
+    FAISS_RES = faiss.StandardGpuResources()
+    GPU_INDEX = faiss.index_cpu_to_gpu(FAISS_RES, 0, FAISS_INDEX)
+else:
+    GPU_INDEX = FAISS_INDEX
+
+print(f"FAISS GPU available: {faiss.get_num_gpus() > 0}")
+print(f"FAISS index type: {type(FAISS_INDEX)}")
+print(f"FAISS index size: {FAISS_INDEX.ntotal}")
+
 
 def match_card(image_bytes):
     """Match the query image using the FAISS index with GPU acceleration and parallel processing."""
+    start_time = time.time()
     _, query_descriptors = extract_keypoints_from_bytes(image_bytes)
+    extract_time = time.time()
+    print(f"Time to extract keypoints: {extract_time - start_time:.4f} seconds")
 
     # Convert query descriptors to NumPy array
     query_descriptors = np.array(query_descriptors, dtype=np.float32)
 
-    # Check if GPU FAISS is available and use it
+    # Perform nearest neighbor search
+    search_start = time.time()
+    k = 2
+    gpu_start = time.time()
     if faiss.get_num_gpus() > 0:
+        print("Using FAISS GPU for search")
         res = faiss.StandardGpuResources()  # Initialize GPU resources
         dimension = query_descriptors.shape[1]
         gpu_index = faiss.index_cpu_to_gpu(
             res, 0, FAISS_INDEX)  # Transfer index to GPU
     else:
+        print("Using FAISS CPU for search")
         gpu_index = FAISS_INDEX
-
-    # Perform nearest neighbor search
-    k = 2  # Number of nearest neighbors
+    gpu_end = time.time()
+    print(f"Time to prepare FAISS index: {gpu_end - gpu_start:.4f} seconds")
     distances, indices = gpu_index.search(query_descriptors, k)
+    search_end = time.time()
+    print(f"Query descriptors shape: {query_descriptors.shape}")
+    print(f"Time for FAISS search: {search_end - search_start:.4f} seconds")
 
     # Apply Lowe's ratio test in parallel
+    ratio_start = time.time()
     def process_match(i):
         if distances[i][0] < 0.7 * distances[i][1]:  # Lowe's ratio test
             return indices[i][0]
@@ -149,15 +171,22 @@ def match_card(image_bytes):
     with ThreadPoolExecutor() as executor:
         good_matches = list(filter(None, executor.map(
             process_match, range(len(distances)))))
+    ratio_end = time.time()
+    print(f"Time for Lowe's ratio test: {ratio_end - ratio_start:.4f} seconds")
 
     # Count matches for each filename
+    count_start = time.time()
     match_counts = {}
     for match_idx in good_matches:
         filename = FILENAMES[match_idx]
         match_counts[filename] = match_counts.get(filename, 0) + 1
+    count_end = time.time()
+    print(f"Time to count matches: {count_end - count_start:.4f} seconds")
 
     # Find the best match
     best_match = max(match_counts, key=match_counts.get, default=None)
+    total_time = time.time() - start_time
+    print(f"Total time in match_card: {total_time:.4f} seconds")
     return best_match
 
 @app.post("/matchCard")
@@ -484,4 +513,42 @@ async def remove_card_from_collection(request: RemoveCardRequest, current_user: 
 
 #     # Run the blocking Selenium operation in a separate thread
 #     return await asyncio.to_thread(fetch_card_info)
+
+
+def add_new_cards_to_faiss():
+    """
+    Add new cards from the database to the FAISS index and update filenames.pkl.
+    Only cards not already in FILENAMES are added.
+    """
+    descriptors_by_filename = load_descriptors()
+    new_filenames = [fn for fn in descriptors_by_filename if fn not in FILENAMES]
+    if not new_filenames:
+        print("No new cards to add.")
+        return {"added": 0, "message": "No new cards to add."}
+
+    new_descriptors = []
+    for fn in new_filenames:
+        for desc in descriptors_by_filename[fn]:
+            new_descriptors.append(desc)
+            FILENAMES.append(fn)
+
+    if not new_descriptors:
+        print("No new descriptors to add.")
+        return {"added": 0, "message": "No new descriptors to add."}
+
+    new_descriptors = np.vstack(new_descriptors).astype(np.float32)
+    FAISS_INDEX.add(new_descriptors)
+
+    # Save updated FAISS index and filenames
+    faiss.write_index(FAISS_INDEX, FAISS_FILE)
+    with open(FILENAMES_FILE, "wb") as f:
+        pickle.dump(FILENAMES, f)
+    print(f"Added {len(new_filenames)} new cards to FAISS index and filenames.")
+    return {"added": len(new_filenames), "message": f"Added {len(new_filenames)} new cards."}
+
+@app.post("/faiss/reindex")
+async def faiss_reindex():
+    """API endpoint to add new cards to the FAISS index and filenames."""
+    result = add_new_cards_to_faiss()
+    return result
 

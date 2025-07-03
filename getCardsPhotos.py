@@ -8,6 +8,9 @@ SETS_FILE = 'cards_urls/sets.json'
 CARDS_FOLDER = 'cards'
 
 def download_image(url, save_path):
+    if os.path.exists(save_path):
+        print(f"Already exists: {save_path}")
+        return
     try:
         response = requests.get(url, stream=True)
         response.raise_for_status()
