@@ -1,5 +1,5 @@
 /cards
 __pycache__
-cards.db
+# cards.db
 faiss_index.bin
 filenames.pkl

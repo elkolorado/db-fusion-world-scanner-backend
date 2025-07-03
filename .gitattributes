@@ -1,3 +1,2 @@
-faiss_index.bin filter=lfs diff=lfs merge=lfs -text
-filenames.pkl filter=lfs diff=lfs merge=lfs -text
 * !text !filter !merge !diff
+faiss_index.bin filter=lfs diff=lfs merge=lfs -text

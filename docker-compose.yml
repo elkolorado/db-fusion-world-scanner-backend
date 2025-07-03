@@ -1,10 +1,5 @@
 services:
-  web:
-    image: my-faiss-gpu-app:latest
-    ports:
-      - "8002:8002"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: [gpu]
+   web:
+     build: .
+     ports:
+       - "8002:8002"

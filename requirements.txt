@@ -1,7 +1,10 @@
 fastapi
 uvicorn
 numpy
-faiss-gpu
+faiss-cpu
 python-multipart
 requests
 opencv-python
+jwt
+bcrypt
+pydantic

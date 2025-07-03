@@ -23,7 +23,7 @@ app.add_middleware(
 )
 
 # ORB Detector
-sift = cv2.SIFT_create(nfeatures=500)
+sift = cv2.SIFT_create(nfeatures=1000)
 
 
 # File paths for saved descriptors and FAISS index
@@ -70,30 +70,62 @@ def load_descriptors(db_path="cards.db"):
 
 
 def precompute_faiss_index():
-    """Precompute FAISS index for all descriptors."""
+    """Precompute FAISS index for all descriptors using IndexIVFPQ for compression."""
     all_descriptors = []
     filenames = []
 
     # Collect all descriptors and filenames
     for filename, descriptors in DESCRIPTORS_CACHE.items():
         all_descriptors.append(np.vstack(descriptors))
-        # Map each descriptor to its filename
         filenames.extend([filename] * len(descriptors))
 
-    # Stack all descriptors into a single NumPy array
     all_descriptors = np.vstack(all_descriptors).astype(np.float32)
-
-    # Create a FAISS index
-    # Descriptor dimensionality (128 for SIFT)
     dimension = all_descriptors.shape[1]
-    index = faiss.IndexFlatL2(dimension)  # L2 distance (Euclidean)
-    index.add(all_descriptors)  # Add descriptors to the index
 
-    print(f"FAISS index built with {index.ntotal} descriptors.")
+    # Use IVFPQ index for compression, tuned for better accuracy
+    nlist = 1024  # number of clusters (higher for better recall)
+    m = 16        # number of subquantizers (higher for better accuracy)
+    quantizer = faiss.IndexFlatL2(dimension)
+    index = faiss.IndexIVFPQ(quantizer, dimension, nlist, m, 8)  # 8 bits per code
+    print(f"Training IVFPQ index with nlist={nlist}, m={m}...")
+    index.train(all_descriptors)
+    print("Adding descriptors to IVFPQ index...")
+    index.add(all_descriptors)
+    print(f"FAISS IVFPQ index built with {index.ntotal} descriptors.")
     return index, filenames
 
 
 FILENAMES_FILE = "filenames.pkl"
+
+def build_faiss_from_images(cards_dir="cards"):
+    """Build FAISS index and filenames directly from images in the cards directory."""
+    all_descriptors = []
+    filenames = []
+    for filename in os.listdir(cards_dir):
+        if filename.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+            file_path = os.path.join(cards_dir, filename)
+            image = cv2.imread(file_path)
+            if image is None:
+                print(f"Warning: Could not read {file_path}")
+                continue
+            keypoints, descriptors = sift.detectAndCompute(image, None)
+            if descriptors is not None and len(descriptors) > 0:
+                all_descriptors.append(descriptors)
+                filenames.extend([filename] * len(descriptors))
+    if not all_descriptors:
+        raise RuntimeError("No descriptors found in any image.")
+    all_descriptors = np.vstack(all_descriptors).astype(np.float32)
+    dimension = all_descriptors.shape[1]
+    nlist = 4096  # Increase clusters for better recall
+    m = 32        # Increase subquantizers for better accuracy
+    quantizer = faiss.IndexFlatL2(dimension)
+    index = faiss.IndexIVFPQ(quantizer, dimension, nlist, m, 8)
+    print(f"Training IVFPQ index with nlist={nlist}, m={m}...")
+    index.train(all_descriptors)
+    print("Adding descriptors to IVFPQ index...")
+    index.add(all_descriptors)
+    print(f"FAISS IVFPQ index built with {index.ntotal} descriptors.")
+    return index, filenames
 
 print("Loading FAISS index...")
 if os.path.exists(FAISS_FILE) and os.path.exists(FILENAMES_FILE):
@@ -106,15 +138,10 @@ if os.path.exists(FAISS_FILE) and os.path.exists(FILENAMES_FILE):
         FILENAMES = pickle.load(f)
     print(f"Filenames loaded from {FILENAMES_FILE}")
 else:
-    # Compute descriptors and FAISS index from scratch
-    DESCRIPTORS_CACHE = load_descriptors()  # Load descriptors from the database
-    FAISS_INDEX, FILENAMES = precompute_faiss_index()
-
-    # Save FAISS index to file
+    # Build descriptors and FAISS index directly from images
+    FAISS_INDEX, FILENAMES = build_faiss_from_images("cards")
     faiss.write_index(FAISS_INDEX, FAISS_FILE)
     print(f"FAISS index saved to {FAISS_FILE}")
-
-    # Save FILENAMES to file
     with open(FILENAMES_FILE, "wb") as f:
         pickle.dump(FILENAMES, f)
     print(f"Filenames saved to {FILENAMES_FILE}")
@@ -443,6 +470,95 @@ async def remove_card_from_collection(request: RemoveCardRequest, current_user: 
     conn.close()
 
     return {"message": "Card quantity updated successfully"}
+
+
+
+@app.post("/matchCards")
+async def match_cards_api(file: UploadFile = File(...)):
+    t0 = time.time()
+    image_bytes = await file.read()
+    t1 = time.time()
+    image_array = np.frombuffer(image_bytes, dtype=np.uint8)
+    image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+    t2 = time.time()
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blur, 50, 150)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    t3 = time.time()
+    rects = []
+    card_imgs = []
+    for cnt in contours:
+        epsilon = 0.02 * cv2.arcLength(cnt, True)
+        approx = cv2.approxPolyDP(cnt, epsilon, True)
+        if len(approx) == 4 and cv2.contourArea(approx) > 10000:
+            x, y, w, h = cv2.boundingRect(approx)
+            card_img = image[y:y+h, x:x+w]
+            card_imgs.append(card_img)
+            _, card_bytes = cv2.imencode('.jpg', card_img)
+            card_bytes = card_bytes.tobytes()
+            rects.append((approx, x, y, w, h, card_bytes))
+    t4 = time.time()
+    # --- Batch SIFT extraction ---
+    descriptors_list = []
+    descriptor_ranges = []
+    for card_img in card_imgs:
+        keypoints, descriptors = sift.detectAndCompute(card_img, None)
+        if descriptors is not None and len(descriptors) > 0:
+            descriptor_ranges.append((len(descriptors_list), len(descriptors_list) + len(descriptors)))
+            descriptors_list.extend(descriptors)
+        else:
+            descriptor_ranges.append((len(descriptors_list), len(descriptors_list)))
+    t5 = time.time()
+    if len(descriptors_list) == 0:
+        card_matches = [None] * len(card_imgs)
+    else:
+        all_descriptors = np.array(descriptors_list, dtype=np.float32)
+        k = 2
+        gpu_index = GPU_INDEX if faiss.get_num_gpus() > 0 else FAISS_INDEX
+        print(f"[DEBUG] faiss.get_num_gpus() = {faiss.get_num_gpus()}")
+        print(f"[DEBUG] gpu_index type: {type(gpu_index)}")
+        print(f"[DEBUG] all_descriptors shape: {all_descriptors.shape}")
+        print(f"[DEBUG] FAISS_INDEX.ntotal: {FAISS_INDEX.ntotal}")
+        t6 = time.time()
+        distances, indices = gpu_index.search(all_descriptors, k)
+        t7 = time.time()
+        # --- Lowe's ratio test for all descriptors ---
+        good_matches = [None] * len(all_descriptors)
+        for i in range(len(all_descriptors)):
+            if distances[i][0] < 0.7 * distances[i][1]:
+                good_matches[i] = indices[i][0]
+        # --- Assign matches to each card by range ---
+        card_matches = []
+        for start, end in descriptor_ranges:
+            match_counts = {}
+            for idx in range(start, end):
+                match_idx = good_matches[idx]
+                if match_idx is not None:
+                    filename = FILENAMES[match_idx]
+                    match_counts[filename] = match_counts.get(filename, 0) + 1
+            best_match = max(match_counts, key=match_counts.get, default=None) if match_counts else None
+            card_matches.append(best_match)
+    t8 = time.time()
+    vis_image = image.copy()
+    for (approx, x, y, w, h, _), match in zip(rects, card_matches):
+        cv2.drawContours(vis_image, [approx], -1, (0, 255, 0), 4)
+        if match:
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 1.0
+            thickness = 2
+            text_size, _ = cv2.getTextSize(match, font, font_scale, thickness)
+            text_x = x + (w - text_size[0]) // 2
+            text_y = y - 10 if y - 10 > 0 else y + h + 30
+            cv2.putText(vis_image, match, (text_x, text_y), font, font_scale, (0, 0, 255), thickness, cv2.LINE_AA)
+    vis_path = "detected_cards.jpg"
+    cv2.imwrite(vis_path, vis_image)
+    t9 = time.time()
+    # read={t1-t0:.3f}s decode={t2-t1:.3f}s preprocess={t3-t2:.3f}s contours={t4-t3:.3f}s sift={t5-t4:.3f}s faiss={t7-t6:.3f}s assign={t8-t7:.3f}s draw={t9-t8:.3f}s 
+    print(f"TIMING: total={t9-t0:.3f}s")
+    return {"matches": card_matches}
+
+
 
 # import asyncio
 # from selenium import webdriver
