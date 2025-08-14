@@ -6,6 +6,13 @@ import os
 import pickle
 import time
 import faiss
+import jwt
+from fastapi import HTTPException, Depends
+from datetime import datetime, timedelta
+
+
+from pydantic import BaseModel
+import httpx
 
 from concurrent.futures import ThreadPoolExecutor
 from fastapi.middleware.cors import CORSMiddleware
@@ -222,24 +229,40 @@ async def match_card_api(file: UploadFile = File(...)):
     image_bytes = await file.read()
 
     # Save the uploaded image to a file (optional, for debugging)
-    # with open("uploaded_image.jpg", "wb") as f:
-    #     f.write(image_bytes)
+    with open("uploaded_image.jpg", "wb") as f:
+        f.write(image_bytes)
 
     # Match the card
     best_match = match_card(image_bytes)
+
+    if best_match:
+        card_market_id = os.path.splitext(best_match)[0]
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"http://localhost:8000/card/{card_market_id}")
+            if response.status_code == 200:
+                card_details = response.json()
+                return {"best_match": best_match, "card_details": card_details}
+            else:
+                return {"best_match": best_match, "error": "Failed to fetch card details"}
+    else:
+        return {"best_match": None, "error": "No match found"}
 
     # Return the best match
     return {"best_match": best_match}
 
 #file response
+
 from fastapi.responses import FileResponse
 
-@app.get("/displayImage")
-async def display_image(filename: str):
-    """Serve an image from the cards folder."""
-    file_path = f"cards/{filename}"
+
+# New endpoint: get card image by cardMarketId and extension
+@app.get("/card-image/{cardMarketId}.{extension}")
+async def get_card_image(cardMarketId: str, extension: str):
+    """Serve a card image from the cards folder by cardMarketId and extension."""
+    filename = f"{cardMarketId}.{extension}"
+    file_path = os.path.join("cards", filename)
     if not os.path.exists(file_path):
-        return {"error": "File not found"}
+        raise HTTPException(status_code=404, detail="Card image not found")
     return FileResponse(file_path)
 
 
@@ -250,9 +273,7 @@ async def read_root():
     return {"Hello": "World"}
 
 
-import jwt
-from fastapi import HTTPException, Depends
-from datetime import datetime, timedelta
+
 
 # Secret key for signing JWTs
 SECRET_KEY = "your_secret_key2"
@@ -371,7 +392,6 @@ async def get_collection(current_user: str = Depends(get_current_user)):
 
     return collection
 
-from pydantic import BaseModel
 
 # Define a Pydantic model for adding a card
 
