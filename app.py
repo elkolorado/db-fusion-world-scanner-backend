@@ -23,7 +23,7 @@ app = FastAPI()
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8081", "http://127.0.0.1"],  # Allow localhost
+    allow_origins=["http://localhost:8081", "http://127.0.0.1", "https://riftbound-scanner-nine.vercel.app"],  # Allow localhost
     allow_credentials=True,
     allow_methods=["*"],  # Allow all HTTP methods
     allow_headers=["*"],  # Allow all headers
@@ -392,16 +392,30 @@ async def get_collection(current_user: str = Depends(get_current_user)):
 
     return collection
 
-
-# Define a Pydantic model for adding a card
+from typing import Any
+from fastapi import Body
 
 @app.post("/collection/add")
-async def add_card_to_collection(request: Card, current_user: str = Depends(get_current_user)):
-    print(request)
-    """Add a card to the user's collection."""
-    card_id = request.name + '.webp'
+async def add_card_to_collection(
+    body: dict = Body(...),
+    current_user: str = Depends(get_current_user)
+):
+    """Add a card to the user's collection. Accepts arbitrary JSON; extracts 'name' or 'id'."""
+    print(f"[DEBUG] /collection/add body: {body}")
 
-    print(card_id)
+    # Accept either "name" or "id" fields, convert to string (handles numeric)
+    card_name = None
+    if isinstance(body, dict):
+        if body.get("name") is not None:
+            card_name = str(body.get("name"))
+        elif body.get("id") is not None:
+            card_name = str(body.get("id"))
+
+    if not card_name:
+        raise HTTPException(status_code=422, detail="name or id is required in JSON body")
+
+    # Ensure filename ends with extension
+    card_id = card_name if card_name.lower().endswith('.jpg') else card_name + '.jpg'
 
     # Connect to the database
     conn = sqlite3.connect("cards.db")
@@ -411,7 +425,6 @@ async def add_card_to_collection(request: Card, current_user: str = Depends(get_
     cursor.execute("SELECT id FROM cards WHERE filename = ?", (card_id,))
     card = cursor.fetchone()
     currentCardId = card[0] if card else None
-    print(card)
     if not card:
         conn.close()
         raise HTTPException(status_code=404, detail="Card not found")
@@ -425,7 +438,6 @@ async def add_card_to_collection(request: Card, current_user: str = Depends(get_
     user_card = cursor.fetchone()
 
     if user_card is not None:
-        # Update the quantity if the card already exists in the user's collection
         new_quantity = user_card[0] + 1
         cursor.execute("""
             UPDATE user_cards
@@ -433,7 +445,6 @@ async def add_card_to_collection(request: Card, current_user: str = Depends(get_
             WHERE username = ? AND card_id = ?
         """, (new_quantity, current_user, currentCardId))
     else:
-        # Insert the card into the user's collection
         cursor.execute("""
             INSERT INTO user_cards (username, card_id, quantity)
             VALUES (?, ?, ?)
@@ -442,8 +453,7 @@ async def add_card_to_collection(request: Card, current_user: str = Depends(get_
     conn.commit()
     conn.close()
 
-    return request
-
+    return {"name": card_name, "message": "Added to collection"}
 
 # Define a Pydantic model for removing a card
 class RemoveCardRequest(BaseModel):

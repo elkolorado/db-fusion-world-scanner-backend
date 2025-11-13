@@ -1,5 +1,6 @@
 /cards
 __pycache__
-# cards.db
+cards.db
 faiss_index.bin
 filenames.pkl
+/card_images_dragon_ball_fusion_world
