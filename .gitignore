@@ -4,3 +4,9 @@ cards.db
 faiss_index.bin
 filenames.pkl
 /card_images_dragon_ball_fusion_world
+matched_results
+detected_cards.jpg
+normalized_image.jpg
+uploaded_image.jpg
+yolov8-cards-bb.pt
+yolov8-cards-binder.pt

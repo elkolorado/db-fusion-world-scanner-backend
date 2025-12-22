@@ -9,7 +9,7 @@ import faiss
 import jwt
 from fastapi import HTTPException, Depends
 from datetime import datetime, timedelta
-
+import asyncio
 
 from pydantic import BaseModel
 import httpx
@@ -23,7 +23,7 @@ app = FastAPI()
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8081", "http://127.0.0.1", "https://riftbound-scanner-nine.vercel.app"],  # Allow localhost
+    allow_origins=["http://localhost:8081", "http://127.0.0.1", "https://riftbound-scanner-nine.vercel.app", "http://127.0.0.1:5500/", "http://192.168.1.22:8081"],  # Allow localhost
     allow_credentials=True,
     allow_methods=["*"],  # Allow all HTTP methods
     allow_headers=["*"],  # Allow all headers
@@ -36,6 +36,7 @@ sift = cv2.SIFT_create(nfeatures=1000)
 # File paths for saved descriptors and FAISS index
 DESCRIPTORS_FILE = "descriptors.pkl"
 FAISS_FILE = "faiss_index.bin"
+CARDS_DIR = "D:\github\cardmarket-scraper\card_images\Pokemon"
 
 
 def extract_keypoints_from_bytes(image_bytes):
@@ -104,7 +105,7 @@ def precompute_faiss_index():
 
 FILENAMES_FILE = "filenames.pkl"
 
-def build_faiss_from_images(cards_dir="cards"):
+def build_faiss_from_images(cards_dir=CARDS_DIR):
     """Build FAISS index and filenames directly from images in the cards directory."""
     all_descriptors = []
     filenames = []
@@ -123,7 +124,7 @@ def build_faiss_from_images(cards_dir="cards"):
         raise RuntimeError("No descriptors found in any image.")
     all_descriptors = np.vstack(all_descriptors).astype(np.float32)
     dimension = all_descriptors.shape[1]
-    nlist = 4096  # Increase clusters for better recall
+    nlist = 8192  # Increase clusters for better recall
     m = 32        # Increase subquantizers for better accuracy
     quantizer = faiss.IndexFlatL2(dimension)
     index = faiss.IndexIVFPQ(quantizer, dimension, nlist, m, 8)
@@ -138,6 +139,7 @@ print("Loading FAISS index...")
 if os.path.exists(FAISS_FILE) and os.path.exists(FILENAMES_FILE):
     # Load FAISS index from file
     FAISS_INDEX = faiss.read_index(FAISS_FILE)
+    FAISS_INDEX.nprobe = 32
     print(f"FAISS index loaded from {FAISS_FILE}")
 
     # Load FILENAMES from file
@@ -146,7 +148,7 @@ if os.path.exists(FAISS_FILE) and os.path.exists(FILENAMES_FILE):
     print(f"Filenames loaded from {FILENAMES_FILE}")
 else:
     # Build descriptors and FAISS index directly from images
-    FAISS_INDEX, FILENAMES = build_faiss_from_images("cards")
+    FAISS_INDEX, FILENAMES = build_faiss_from_images(CARDS_DIR)
     faiss.write_index(FAISS_INDEX, FAISS_FILE)
     print(f"FAISS index saved to {FAISS_FILE}")
     with open(FILENAMES_FILE, "wb") as f:
@@ -177,7 +179,7 @@ def match_card(image_bytes):
 
     # Perform nearest neighbor search
     search_start = time.time()
-    k = 2
+    k = 6  # Number of nearest neighbors to retrieve
     gpu_start = time.time()
     if faiss.get_num_gpus() > 0:
         print("Using FAISS GPU for search")
@@ -198,7 +200,7 @@ def match_card(image_bytes):
     # Apply Lowe's ratio test in parallel
     ratio_start = time.time()
     def process_match(i):
-        if distances[i][0] < 0.7 * distances[i][1]:  # Lowe's ratio test
+        if distances[i][0] < 0.75 * distances[i][1]:  # Lowe's ratio test
             return indices[i][0]
         return None
 
@@ -254,16 +256,42 @@ async def match_card_api(file: UploadFile = File(...)):
 
 from fastapi.responses import FileResponse
 
-
+import re
+from pathlib import Path
 # New endpoint: get card image by cardMarketId and extension
-@app.get("/card-image/{cardMarketId}.{extension}")
-async def get_card_image(cardMarketId: str, extension: str):
-    """Serve a card image from the cards folder by cardMarketId and extension."""
-    filename = f"{cardMarketId}.{extension}"
-    file_path = os.path.join("cards", filename)
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Card image not found")
-    return FileResponse(file_path)
+@app.get("/card-image/{tcg_id}/{cardMarketId}.{extension}")
+async def get_card_image(tcg_id: int, cardMarketId: str, extension: str):
+    CARD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+    ALLOWED_EXT = {"jpg", "png"}
+    if extension not in ALLOWED_EXT:
+        raise HTTPException(status_code=400)
+
+    if not CARD_ID_RE.match(cardMarketId):
+        raise HTTPException(status_code=400)
+
+
+    if tcg_id == 1:
+        tcg_name = "DragonBallSuper"
+    elif tcg_id == 3:
+        tcg_name = "OnePiece"
+    elif tcg_id == 4:
+        tcg_name = "Magic"
+    elif tcg_id == 5:
+        tcg_name = "Riftbound"
+    elif tcg_id == 1006:
+        tcg_name = "Pokemon"
+
+    base = Path("D:\\github\\cardmarket-scraper\\card_images").resolve()
+    path = (base / f"{tcg_name}/{cardMarketId}.{extension}").resolve()
+    print(path)
+    if base not in path.parents or not path.exists():
+        raise HTTPException(status_code=404)
+
+    return FileResponse(
+        path,
+        media_type="image/jpeg" if extension == "jpg" else "image/png",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"}
+    )
 
 
 
@@ -392,30 +420,16 @@ async def get_collection(current_user: str = Depends(get_current_user)):
 
     return collection
 
-from typing import Any
-from fastapi import Body
+
+# Define a Pydantic model for adding a card
 
 @app.post("/collection/add")
-async def add_card_to_collection(
-    body: dict = Body(...),
-    current_user: str = Depends(get_current_user)
-):
-    """Add a card to the user's collection. Accepts arbitrary JSON; extracts 'name' or 'id'."""
-    print(f"[DEBUG] /collection/add body: {body}")
+async def add_card_to_collection(request: Card, current_user: str = Depends(get_current_user)):
+    print(request)
+    """Add a card to the user's collection."""
+    card_id = request.name + '.webp'
 
-    # Accept either "name" or "id" fields, convert to string (handles numeric)
-    card_name = None
-    if isinstance(body, dict):
-        if body.get("name") is not None:
-            card_name = str(body.get("name"))
-        elif body.get("id") is not None:
-            card_name = str(body.get("id"))
-
-    if not card_name:
-        raise HTTPException(status_code=422, detail="name or id is required in JSON body")
-
-    # Ensure filename ends with extension
-    card_id = card_name if card_name.lower().endswith('.jpg') else card_name + '.jpg'
+    print(card_id)
 
     # Connect to the database
     conn = sqlite3.connect("cards.db")
@@ -425,6 +439,7 @@ async def add_card_to_collection(
     cursor.execute("SELECT id FROM cards WHERE filename = ?", (card_id,))
     card = cursor.fetchone()
     currentCardId = card[0] if card else None
+    print(card)
     if not card:
         conn.close()
         raise HTTPException(status_code=404, detail="Card not found")
@@ -438,6 +453,7 @@ async def add_card_to_collection(
     user_card = cursor.fetchone()
 
     if user_card is not None:
+        # Update the quantity if the card already exists in the user's collection
         new_quantity = user_card[0] + 1
         cursor.execute("""
             UPDATE user_cards
@@ -445,6 +461,7 @@ async def add_card_to_collection(
             WHERE username = ? AND card_id = ?
         """, (new_quantity, current_user, currentCardId))
     else:
+        # Insert the card into the user's collection
         cursor.execute("""
             INSERT INTO user_cards (username, card_id, quantity)
             VALUES (?, ?, ?)
@@ -453,7 +470,8 @@ async def add_card_to_collection(
     conn.commit()
     conn.close()
 
-    return {"name": card_name, "message": "Added to collection"}
+    return request
+
 
 # Define a Pydantic model for removing a card
 class RemoveCardRequest(BaseModel):
@@ -501,9 +519,267 @@ async def remove_card_from_collection(request: RemoveCardRequest, current_user: 
 
     return {"message": "Card quantity updated successfully"}
 
+from ultralytics import YOLO # The package for YOLOv8 models
+from typing import List, Dict, Tuple, Any
+try:
+    # The Ultralytics YOLO class handles loading the .pt file
+    YOLO_MODEL = YOLO("yolov8-cards-binder.pt")
+    print("YOLO model loaded successfully.")
+except Exception as e:
+    raise RuntimeError(f"Failed to load YOLO model: {e}")
+OUTPUT_DIR = "matched_results"
 
+# --- CORE YOLO DETECTION FUNCTION ---
+
+def run_yolo_inference(image: np.ndarray) -> List[Tuple[int, int, int, int]]:
+    # ... (Unchanged) ...
+    """
+    Runs YOLOv8 inference on a NumPy image and extracts pixel-based bounding boxes.
+    
+    Args:
+        image: The input image as a NumPy array (HWC format).
+        
+    Returns:
+        A list of bounding boxes: [(xmin, ymin, xmax, ymax), ...] in pixel coordinates.
+    """
+    if YOLO_MODEL is None:
+        raise RuntimeError("YOLO model not initialized. Call initialize_resources() first.")
+
+    # 1. Run inference
+    results = YOLO_MODEL(image, imgsz=640, conf=0.25, verbose=False)
+
+    
+    # 2. Extract bounding box coordinates
+    bboxes = []
+    if results and results[0].boxes is not None:
+        boxes_xyxy = results[0].boxes.xyxy.cpu().numpy().astype(np.int32)
+        bboxes = [tuple(box) for box in boxes_xyxy]
+        
+    return bboxes
+
+# --- UTILITY FUNCTION (CROP) ---
+
+def crop_card_from_image(image: np.ndarray, bbox: Tuple[int, int, int, int]) -> np.ndarray:
+    # ... (Unchanged) ...
+    """Crops the image based on the bounding box (already in pixel coords)."""
+    xmin, ymin, xmax, ymax = bbox
+    cropped_image = image[ymin:ymax, xmin:xmax]
+    return cropped_image
+    
+# --- DRAWING FUNCTION (MODIFIED) ---
+
+def draw_and_save_image(full_image: np.ndarray, detections: List[Dict], original_filename: str) -> str:
+    """Draws bounding boxes and labels with smaller text on the image."""
+    
+    output_image = full_image.copy()
+    
+    # --- ADJUSTED SETTINGS ---
+    GREEN = (0, 255, 0) 
+    FONT = cv2.FONT_HERSHEY_SIMPLEX
+    FONT_SCALE = 0.2    # Decreased from 1.0
+    THICKNESS = 1       # Decreased from 2 for better readability at small scales
+    # -------------------------
+    
+    for detection in detections:
+        bbox = detection['bbox']
+        card_details = detection.get('card_details')
+        match_error = detection.get('error')
+
+        if card_details and 'name' in card_details:
+            display_label = card_details['name']
+        elif match_error:
+            display_label = match_error 
+            if len(display_label) > 30:
+                display_label = f"{display_label[:27]}..."
+        else:
+            display_label = "Unknown Result"
+
+        xmin, ymin, xmax, ymax = bbox
+        
+        # 1. Draw Bounding Box (Keep thickness at 2 for visibility, or drop to 1 if desired)
+        cv2.rectangle(output_image, (xmin, ymin), (xmax, ymax), GREEN, 2)
+        
+        # 2. Calculate smaller text size
+        (text_width, text_height), baseline = cv2.getTextSize(
+            display_label, FONT, FONT_SCALE, THICKNESS
+        )
+        
+        # Positioning logic
+        text_y = ymin - 10
+        if text_y < text_height + 5: 
+            text_y = ymin + text_height + 5
+
+        # Draw the background rectangle
+        cv2.rectangle(
+            output_image, 
+            (xmin, text_y - text_height - baseline), 
+            (xmin + text_width, text_y + baseline), 
+            GREEN, 
+            cv2.FILLED
+        )
+        
+        # Draw the smaller text
+        cv2.putText(
+            output_image, 
+            display_label, 
+            (xmin, text_y), 
+            FONT, 
+            FONT_SCALE, 
+            (0, 0, 0), 
+            THICKNESS, 
+            cv2.LINE_AA
+        )
+
+    output_path = os.path.join(OUTPUT_DIR, f"matched_{original_filename}.{int(time.time())}.jpg")
+    cv2.imwrite(output_path, output_image)
+    return output_path
+# --- ASYNC CARD PROCESSING FUNCTION (NEW) ---
+
+async def process_detected_card_async(
+    card_index: int, 
+    bbox: Tuple[int, int, int, int], 
+    full_image: np.ndarray,
+    match_card_sync: callable # Pass the sync SIFT/FAISS function
+) -> Dict[str, Any]:
+    """Crops, matches, and fetches details for a single card asynchronously."""
+    
+    cropped_card_np = crop_card_from_image(full_image, bbox)
+    
+    if cropped_card_np.size == 0:
+        return {"id": f"card_{card_index}", "bbox": bbox, "match": None, "error": "Empty crop"}
+    
+    # Re-encode to bytes for the synchronous match_card function
+    _, buffer = cv2.imencode('.jpg', cropped_card_np)
+    card_bytes = buffer.tobytes()
+
+    # NOTE: Assuming match_card (SIFT/FAISS) is synchronous and CPU-bound.
+    # We must run it in a separate thread to prevent blocking the async event loop.
+    # The `to_thread` utility helps with this.
+    best_match_filename = await asyncio.to_thread(match_card_sync, card_bytes)
+    
+    result = {"id": f"card_{card_index}", "bbox": bbox, "match": best_match_filename}
+
+    if best_match_filename:
+        # Extract the card market ID (e.g., '12345' from '12345.jpg')
+        card_market_id = os.path.splitext(best_match_filename)[0]
+        
+        # --- ASYNCHRONOUS HTTP REQUEST ---
+        try:
+            # Use httpx.AsyncClient for non-blocking network request
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"http://localhost:8000/card/{card_market_id}", timeout=5.0)
+                
+                if response.status_code == 200:
+                    result["card_details"] = response.json()
+                else:
+                    result["error"] = f"Failed to fetch details (Status: {response.status_code})"
+        except httpx.RequestError as e:
+            result["error"] = f"HTTP Error fetching details: {e}"
+    else:
+        result["error"] = "No match found"
+        
+    return result
+
+# --- MAIN MULTI-CARD MATCHING FUNCTION (MODIFIED TO BE ASYNC) ---
+
+async def match_multiple_cards(image_bytes: bytes, original_filename: str = "input_image") -> Dict:
+    """
+    Processes an image containing multiple cards using YOLO detection, SIFT/FAISS matching,
+    and asynchronous fetching of card details.
+    """
+    start_time = time.time()
+    
+    if FAISS_INDEX is None or YOLO_MODEL is None:
+        raise RuntimeError("Resources not initialized. Call initialize_resources() first.")
+        
+    # 1. Decode Image from Bytes
+    np_arr = np.frombuffer(image_bytes, np.uint8)
+    full_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    
+    if full_image is None:
+        return {"error": "Could not decode input image."}
+
+    # 2. Run YOLO Inference (Synchronous)
+    # This remains synchronous as it is CPU-bound and fast for one image.
+    bboxes = run_yolo_inference(full_image)
+    print(f"Found {len(bboxes)} cards. Starting parallel matching...")
+    
+    if not bboxes:
+        # return {"result": "No cards detected by YOLO.", "output_path": None}
+        #try single match_card 
+        best_match = match_card(image_bytes)
+        if best_match:
+            card_market_id = os.path.splitext(best_match)[0]
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"http://localhost:8000/card/{card_market_id}")
+                if response.status_code == 200:
+                    card_details = response.json()
+                    match_results = {
+                        "card_0": {
+                            "best_match": best_match,
+                            "card_details": card_details,
+                            "error": None
+                        }
+                    }
+                    return {"status": "success", "matches": match_results, "output_path": None}
+                else:
+                    match_results = {
+                        "card_0": {
+                            "best_match": best_match,
+                            "card_details": None,
+                            "error": "Failed to fetch card details"
+                        }
+                    }
+                    return {"status": "success", "matches": match_results, "output_path": None}
+
+    # 3. Process Each Detected Card in Parallel (limit concurrency to 9)
+    sem = asyncio.BoundedSemaphore(9)
+
+    async def _limited_task(i, bbox):
+        async with sem:
+            return await process_detected_card_async(i, bbox, full_image, match_card)
+
+    tasks = [asyncio.create_task(_limited_task(i, bbox)) for i, bbox in enumerate(bboxes)]
+    
+    # Run all asynchronous tasks concurrently
+    # This is efficient for the I/O-bound step (HTTP requests)
+    detections = await asyncio.gather(*tasks)
+
+    # 4. Draw and Save the Result Image (Synchronous)
+    
+    # Prepare the final results dictionary using the fetched details
+    match_results = {
+        d['id']: {
+            "best_match": d.get('match'),
+            "card_details": d.get('card_details'),
+            "error": d.get('error')
+        } for d in detections
+    }
+    
+    # Sanitize filename for saving (remove extension and spaces)
+    base_filename = os.path.splitext(original_filename)[0].replace(" ", "_")
+    output_path = draw_and_save_image(full_image, detections, base_filename)
+    
+    total_time = time.time() - start_time
+
+    return {
+        "status": "success",
+        "total_time": f"{total_time:.4f}s",
+        "matches": match_results, # Now contains card_details instead of just match filename
+        "output_path": output_path
+    }
+
+
+# --- API ENDPOINT (MODIFIED TO BE ASYNC) ---
 
 @app.post("/matchCards")
+async def match_multiple_cards_api(file: UploadFile = File(...)):
+    """API endpoint to match multiple cards in an image."""
+    image_bytes = await file.read()
+    # The main function is now awaited
+    match_results = await match_multiple_cards(image_bytes, original_filename=file.filename) 
+    return match_results
+@app.post("/matchCards_old")
 async def match_cards_api(file: UploadFile = File(...)):
     t0 = time.time()
     image_bytes = await file.read()
@@ -590,7 +866,7 @@ async def match_cards_api(file: UploadFile = File(...)):
 
 
 
-# import asyncio
+
 # from selenium import webdriver
 # from selenium.webdriver.common.by import By
 # from selenium.webdriver.support.ui import WebDriverWait
