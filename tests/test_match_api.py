@@ -9,9 +9,9 @@ parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument('-tcg', choices=['riftbound', 'fusion'], default='riftbound')
 args, remaining_argv = parser.parse_known_args()
 tcg = args.tcg
-
+tcg_name = 'riftbound' if tcg == 'riftbound' else 'dragon ball fusion world'
 # Define URL and images directory depending on tcg
-url = "http://127.0.0.1:8002/matchCard"
+url = "http://127.0.0.1:8002/matchCard" + f"?tcg_name={tcg_name}"
 if tcg == 'riftbound':
     imgs_dir = os.path.join("tests", "imgs", "riftbound")
 else:  # 'fusion'

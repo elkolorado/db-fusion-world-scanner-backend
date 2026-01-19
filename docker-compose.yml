@@ -1,5 +1,15 @@
+version: "3.8"
 services:
-   web:
-     build: .
-     ports:
-       - "8002:8002"
+  app:
+    build: .
+    container_name: db-fusion-app
+    ports:
+      - "8002:8002"
+    environment:
+      - APP_ENV=dev
+      - CARD_IMAGES_PATH=/app/card_images
+    volumes:
+      - ./indexes:/app/indexes
+      - ./card_images:/app/card_images
+      - ./config.yaml:/app/config.yaml:ro
+    restart: unless-stopped

@@ -1,0 +1,44 @@
+tcgs:
+  - name: riftbound
+  - name: dbs
+  - name: onepiece
+  - name: pokemon
+  - name: magic
+  - name: digimon
+environments:
+  dev:
+    supported_tcgs:
+      - name: riftbound
+        tcg_id: 5
+        tcg_name: "Riftbound"
+        nprobes: 4
+    card_images_path: "D:\\github\\cardmarket-scraper\\card_images"
+    details_service_url: "http://localhost:8000"
+  prod:
+    supported_tcgs:
+      - name: riftbound
+        tcg_id: 5
+        tcg_name: "Riftbound"
+        nprobes: 4
+      - name: dbs
+        tcg_id: 1
+        tcg_name: "DragonBallSuper"
+        nprobes: 32
+      - name: onepiece
+        tcg_id: 3
+        tcg_name: "OnePiece"
+        nprobes: 32
+      - name: pokemon
+        tcg_id: 1006
+        tcg_name: "Pokemon"
+        nprobes: 32
+      - name: magic
+        tcg_id: 4
+        tcg_name: "Magic"
+        nprobes: 32
+      - name: digimon
+        tcg_id: 1007
+        tcg_name: "Digimon"
+        nprobes: 32
+    card_images_path: "/app/card_images"
+    details_service_url: "http://localhost:8000"

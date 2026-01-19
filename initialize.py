@@ -1,34 +1,25 @@
 import subprocess
-import os
+from services import generate_indexes
+
 
 def run_initialization():
-    """Run initialization scripts."""
+    """Run initialization scripts (generate indexes), then start the app."""
     try:
-        # Check if faiss_index.bin exists
-        if not os.path.exists("faiss_index.bin"):
+        # Generate indexes for configured TCGs if missing
+        print("Generating FAISS indexes (if missing)...")
+        generate_indexes.generate_all(force=False)
 
-            #delete cards.db if it exists
-            if os.path.exists("cards.db"):
-                os.remove("cards.db")
-
-            # Run db.py
-            print("Running db.py...")
-            subprocess.run(["python", "populate_db/create_users_table.py"], check=True)
-
-            # Run lightglue/db.py
-            # print("Running lightglue/db.py...")
-            # subprocess.run(["python", "populate_db/db.py"], check=True)
-        else:
-            print("faiss_index.bin already exists. Skipping database initialization.")
-
-        # Run uvicorn
-        print("Starting uvicorn server...")
+        # Start the app
         subprocess.run(["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8002"], check=True)
 
         print("Initialization completed successfully.")
     except subprocess.CalledProcessError as e:
         print(f"Initialization failed: {e}")
         exit(1)
+    except Exception as e:
+        print(f"Initialization error: {e}")
+        exit(1)
+
 
 if __name__ == "__main__":
     run_initialization()

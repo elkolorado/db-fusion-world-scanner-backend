@@ -1,4 +1,4 @@
-/cards
+/indexes
 __pycache__
 cards.db
 faiss_index.bin
@@ -10,3 +10,5 @@ normalized_image.jpg
 uploaded_image.jpg
 yolov8-cards-bb.pt
 yolov8-cards-binder.pt
+temp_descriptors.bin
+yolo_match.py
